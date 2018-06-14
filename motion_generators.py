@@ -4,7 +4,7 @@ import numpy as np
 from scipy import linalg
 
 def initialize_motion_perturbations_bps(V, p_pert_par, p_pert_perp, pixelsperkm, 
-                                        timestep):
+                                        timestep, seed=None):
     """Initialize the motion field perturbator described in Bowler et al. 
     2006: STEPS: A probabilistic precipitation forecasting scheme which merges 
     an extrapolation nowcast with downscaled NWP. For simplicity, the bias 
@@ -31,6 +31,8 @@ def initialize_motion_perturbations_bps(V, p_pert_par, p_pert_perp, pixelsperkm,
       Spatial resolution of the motion field (pixels/kilometer).
     timestep : float
       Time step for the motion vectors (minutes).
+    seed : int
+      Optional seed number for the random generator.
     
     Returns
     -------
@@ -48,6 +50,8 @@ def initialize_motion_perturbations_bps(V, p_pert_par, p_pert_perp, pixelsperkm,
         raise ValueError("the length of p_pert_perp is not 3")
     
     perturbator = {}
+    
+    np.random.seed(seed)
     
     v_pert_x = np.random.laplace()
     v_pert_y = np.random.laplace()
