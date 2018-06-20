@@ -26,7 +26,7 @@ def get_method(name):
     elif name == "nested":
         return initialize_nonparam_2d_nested_filter, generate_noise_2d_ssft_filter
     else:
-        raise ValueError("unknown method %s, the only currently implemented method is 'fft'" % name)
+        raise ValueError("unknown method %s" % name)
  
 def initialize_nonparam_2d_fft_filter(X, tapering_function='flat-hanning', donorm=False):
     """Takes a 2d input field and produces a fourier filter by using the Fast 
