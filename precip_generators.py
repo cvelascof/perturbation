@@ -110,7 +110,7 @@ def generate_noise_2d_fft_filter(F, seed=None):
             
     return N
        
-def initialize_nonparam_2d_ssft_filter(X, gridres=1.0, **kwargs):
+def initialize_nonparam_2d_ssft_filter(X, **kwargs):
     """Function to compute the local Fourier filters using the Short-Space Fourier
     filtering approach.
     
@@ -126,9 +126,7 @@ def initialize_nonparam_2d_ssft_filter(X, gridres=1.0, **kwargs):
     X : array-like
         Two-dimensional array containing the input field. All values are required 
         to be finite.
-    gridres : float
-        Grid resolution in km.
-        
+
     Optional kwargs:
     ----------
     win_size : int or two-element tuple of ints
