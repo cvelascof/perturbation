@@ -13,20 +13,26 @@ def get_method(name):
     """Return two callable functions to initialize and generate 2d perturbations
     for precipitation fields. The available options are:\n\
     
-    +-------------------+--------------------------------------------------------+
-    |     Name          |              Description                               |
-    +===================+========================================================+
-    |  nonparametric    | this generator uses global Fourier filering.           |
-    +-------------------+--------------------------------------------------------+
-    |  nested           | this generator uses a local Fourier filtering          |
-    +-------------------+--------------------------------------------------------+
+    +-------------------+-------------------------------------------------------+
+    |     Name          |              Description                              |
+    +===================+=======================================================+
+    |  nonparametric    | this global generator uses nonparametric Fourier      |
+    |                   | filering                                              |
+    +-------------------+-------------------------------------------------------+
+    |  ssft             | this local generator uses the short-space Fourier     |
+    |                   | filtering                                             |
+    +-------------------+-------------------------------------------------------+
+    |  nested           | this local generator uses a nested Fourier filtering  |
+    +-------------------+-------------------------------------------------------+
     """
-    if name == "nonparametric":
+    if name.lower() == "nonparametric":
         return initialize_nonparam_2d_fft_filter, generate_noise_2d_fft_filter
-    elif name == "nested":
+    elif name.lower() == "ssft":
+        return initialize_nonparam_2d_ssft_filter, generate_noise_2d_ssft_filter
+    elif name.lower() == "nested":
         return initialize_nonparam_2d_nested_filter, generate_noise_2d_ssft_filter
     else:
-        raise ValueError("unknown method %s" % name)
+        raise ValueError("unknown perturbation method %s" % name)
  
 def initialize_nonparam_2d_fft_filter(X, tapering_function='flat-hanning', donorm=False):
     """Takes a 2d input field and produces a fourier filter by using the Fast 
@@ -103,7 +109,104 @@ def generate_noise_2d_fft_filter(F, seed=None):
     N = (N - N.mean())/N.std()
             
     return N
-   
+       
+def initialize_nonparam_2d_ssft_filter(X, gridres=1.0, **kwargs):
+    """Function to compute the local Fourier filters using the Short-Space Fourier
+    filtering approach.
+    
+    Reference
+    ---------
+    Nerini et al. (2017), "A non-stationary stochastic ensemble generator for radar 
+    rainfall fields based on the short-space Fourier transform", 
+    https://doi.org/10.5194/hess-21-2777-2017.
+
+
+    Parameters
+    ----------
+    X : array-like
+        Two-dimensional array containing the input field. All values are required 
+        to be finite.
+    gridres : float
+        Grid resolution in km.
+        
+    Optional kwargs:
+    ----------
+    win_size : int or two-element tuple of ints
+        Size-length of the window to compute the SSFT.
+    win_type : string ['hanning', 'flat-hanning'] 
+        Type of window used for localization.
+    overlap : float [0,1[ 
+        The proportion of overlap to be applied between successive windows.
+    war_thr : float [0;1]
+        Threshold for the minimum fraction of rain needed for computing the FFT.
+
+    Returns
+    -------
+    F : array-like
+        Four-dimensional array containing the 2d fourier filters distributed over
+        a 2d spatial grid.
+    """
+    
+    if len(X.shape) != 2:
+        raise ValueError("X must be a two-dimensional array")
+    if np.any(np.isnan(X)):
+        raise ValueError("X must not contain NaNs")
+        
+    # Set default parameters
+    win_size = kwargs.get('win_size', (128,128))
+    if type(win_size) == int:
+        win_size = (win_size, win_size)
+    win_type = kwargs.get('win_type', 'flat-hanning')
+    war_thr  = kwargs.get('war_thr', 0.1)
+    overlap = kwargs.get('overlap', 0.2)
+    
+    # make sure non-rainy pixels are set to zero
+    min_value = np.min(X)
+    X = X.copy()
+    X -= min_value
+    
+    # 
+    dim = X.shape
+    dim_x = dim[1]
+    dim_y = dim[0]
+       
+    # SSFT algorithm 
+    
+    # prepare indices
+    idxi = np.zeros((2, 1), dtype=int)
+    idxj = np.zeros((2, 1), dtype=int)
+    
+    # number of windows
+    num_windows_y = np.ceil( float(dim_y) / win_size[0] ).astype(int)
+    num_windows_x = np.ceil( float(dim_x) / win_size[1] ).astype(int)
+    
+    # domain fourier filter
+    F0 = initialize_nonparam_2d_fft_filter(X, win_type, True)
+    # and allocate it to the final grid
+    F = np.zeros((num_windows_y, num_windows_x, F0.shape[0], F0.shape[1]))
+    F += F0[np.newaxis, np.newaxis, :, :]
+
+    # loop rows
+    for i in range(F.shape[0]):
+        # loop columns
+        for j in range(F.shape[1]):
+        
+            # compute indices of local window
+            idxi[0] = np.max( (i*win_size[0] - overlap*win_size[0], 0) ).astype(int)
+            idxi[1] = np.min( (idxi[0] + win_size[0]  + overlap*win_size[0], dim_y) ).astype(int)
+            idxj[0] = np.max( (j*win_size[1] - overlap*win_size[1], 0) ).astype(int)
+            idxj[1] = np.min( (idxj[0] + win_size[1]  + overlap*win_size[1], dim_x) ).astype(int)
+       
+            # build localization mask
+            mask = _get_mask(dim, idxi, idxj, win_type)
+            war = float(np.sum((X*mask) > 0.01)) / ((idxi[1]-idxi[0])*(idxj[1]-idxj[0]))
+            
+            if war > war_thr:
+                # the new filter 
+                F[i, j, : ,:] = initialize_nonparam_2d_fft_filter(X*mask, None, True)
+                
+    return F            
+ 
 def initialize_nonparam_2d_nested_filter(X, gridres=1.0, **kwargs):
     """Function to compute the local Fourier filters using a nested approach.
 
@@ -128,8 +231,6 @@ def initialize_nonparam_2d_nested_filter(X, gridres=1.0, **kwargs):
     F : array-like
         Four-dimensional array containing the 2d fourier filters distributed over
         a 2d spatial grid.
-
-
     """
     
     if len(X.shape) != 2:
@@ -177,16 +278,16 @@ def initialize_nonparam_2d_nested_filter(X, gridres=1.0, **kwargs):
     level=0 
     while level < max_level:
 
-        for m in range(len(Idxi)):
+        for m in xrange(len(Idxi)):
         
             # the indices of rainfall field
             Idxinext, Idxjnext = _split_field(Idxi[m, :], Idxj[m, :], 2)
             # the indices of the field of fourier filters
             Idxipsdnext, Idxjpsdnext = _split_field(Idxipsd[m, :], Idxjpsd[m, :], 2)
             
-            for n in range(len(Idxinext)):
+            for n in xrange(len(Idxinext)):
             
-                mask = _get_mask(dim[0], Idxinext[n, :], Idxjnext[n, :], win_type)
+                mask = _get_mask(dim, Idxinext[n, :], Idxjnext[n, :], win_type)
                 war = np.sum((X*mask) > 0.01)/float((Idxinext[n, 1] - Idxinext[n, 0])**2)
                 
                 if war > war_thr:
@@ -210,7 +311,7 @@ def initialize_nonparam_2d_nested_filter(X, gridres=1.0, **kwargs):
         Idxipsd, Idxjpsd = _split_field((0, 2**max_level), (0, 2**max_level), 2**level)
         
     return F
-   
+ 
 def generate_noise_2d_ssft_filter(F, seed=None, **kwargs):
     """Function to compute the locally correlated noise using a nested approach.
 
@@ -250,27 +351,28 @@ def generate_noise_2d_ssft_filter(F, seed=None, **kwargs):
     
     dim_y = F.shape[2]
     dim_x = F.shape[3]
+    dim = (dim_y, dim_x)
     
     # produce fields of white noise
     N = np.random.randn(dim_y, dim_x)
     fN = fft.fft2(N)
     
     # initialize variables
-    cN = np.zeros((dim_y, dim_x))
-    sM = np.zeros((dim_y, dim_x))
+    cN = np.zeros(dim)
+    sM = np.zeros(dim)
     
     idxi = np.zeros((2, 1), dtype=int)
     idxj = np.zeros((2, 1), dtype=int)
     
     # get the window size
-    winsize = np.round( dim_y/float(F.shape[0]) )
+    win_size = ( float(dim_y)/F.shape[0], float(dim_x)/F.shape[1] )
     
     # loop the windows and build composite image of correlated noise
 
     # loop rows
-    for i in range(F.shape[0]):
+    for i in xrange(F.shape[0]):
         # loop columns
-        for j in range(F.shape[1]):
+        for j in xrange(F.shape[1]):
         
             # apply fourier filtering with local filter
             lF = F[i,j,:,:]
@@ -278,13 +380,13 @@ def generate_noise_2d_ssft_filter(F, seed=None, **kwargs):
             flN = np.array(np.fft.ifft2(flN).real)
             
             # compute indices of local window
-            idxi[0] = np.max( (int(i*winsize - overlap*winsize), 0) )
-            idxi[1] = np.min( (int(idxi[0] + winsize  + overlap*winsize), dim_y) )
-            idxj[0] = np.max( (int(j*winsize - overlap*winsize), 0) )
-            idxj[1] = np.min( (int(idxj[0] + winsize  + overlap*winsize), dim_x) )
+            idxi[0] = np.max( (i*win_size[0] - overlap*win_size[0], 0) ).astype(int)
+            idxi[1] = np.min( (idxi[0] + win_size[0]  + overlap*win_size[0], dim_y) ).astype(int)
+            idxj[0] = np.max( (j*win_size[1] - overlap*win_size[1], 0) ).astype(int)
+            idxj[1] = np.min( (idxj[0] + win_size[1]  + overlap*win_size[1], dim_x) ).astype(int)
             
             # build mask and add local noise field to the composite image
-            M = _get_mask(dim_y, idxi, idxj, win_type)
+            M = _get_mask(dim, idxi, idxj, win_type)
             cN += flN*M
             sM += M 
 
@@ -294,14 +396,14 @@ def generate_noise_2d_ssft_filter(F, seed=None, **kwargs):
             
     return cN
         
-def build_2D_tapering_function(winsize, wintype='flat-hanning'):
+def build_2D_tapering_function(win_size, win_type='flat-hanning'):
     """Produces two-dimensional tapering function for rectangular fields.
 
     Parameters
     ----------
-    winsize : tuple of int
+    win_size : tuple of int
         Size of the tapering window as two-element tuple of integers.
-    wintype : str
+    win_type : str
         Name of the tapering window type (hanning, flat-hanning)
     Returns
     -------
@@ -309,14 +411,17 @@ def build_2D_tapering_function(winsize, wintype='flat-hanning'):
         A two-dimensional numpy array containing the 2D tapering function.
     """
     
-    if wintype == 'hanning':
-        w1dr = np.hanning(winsize[0])
-        w1dc = np.hanning(winsize[1])
-        
-    elif wintype == 'flat-hanning':
+    if len(win_size) != 2:
+        raise ValueError("win_size is not a two-element tuple")
     
-        T = winsize[0]/4.0
-        W = winsize[0]/2.0
+    if win_type == 'hanning':
+        w1dr = np.hanning(win_size[0])
+        w1dc = np.hanning(win_size[1])
+        
+    elif win_type == 'flat-hanning':
+    
+        T = win_size[0]/4.0
+        W = win_size[0]/2.0
         B = np.linspace(-W,W,2*W)
         R = np.abs(B)-T
         R[R < 0] = 0.
@@ -324,8 +429,8 @@ def build_2D_tapering_function(winsize, wintype='flat-hanning'):
         A[np.abs(B) > (2*T)] = 0.0
         w1dr = A
         
-        T = winsize[1]/4.0
-        W = winsize[1]/2.0
+        T = win_size[1]/4.0
+        W = win_size[1]/2.0
         B = np.linspace(-W, W, 2*W)
         R = np.abs(B) - T
         R[R < 0] = 0.
@@ -334,9 +439,9 @@ def build_2D_tapering_function(winsize, wintype='flat-hanning'):
         w1dc = A   
         
     else:
-        print("Unknown window type, returning a rectangular window.")
-        w1dr = np.ones(winsize[0])
-        w1dc = np.ones(winsize[1])
+        print("Unknown win_type, returning a rectangular window.")
+        w1dr = np.ones(win_size[0])
+        w1dc = np.ones(win_size[1])
     
     # Expand to 2-D
     w2d = np.sqrt(np.outer(w1dr,w1dc))
@@ -361,8 +466,8 @@ def _split_field(idxi, idxj, Segments):
     Idxj = np.zeros((Segments**2,2))
     
     count=-1
-    for i in range(Segments):
-        for j in range(Segments):
+    for i in xrange(Segments):
+        for j in xrange(Segments):
             count+=1
             Idxi[count,0] = idxi[0] + i*winsizei
             Idxi[count,1] = np.min( (Idxi[count, 0] + winsizei, idxi[1]) )
@@ -374,17 +479,17 @@ def _split_field(idxi, idxj, Segments):
     
     return Idxi, Idxj
     
-def _get_mask(Size, idxi, idxj, wintype):
+def _get_mask(Size, idxi, idxj, win_type):
     '''Compute a mask of zeros with a window at a given position. 
     '''
 
     idxi = np.array(idxi).astype(int) 
     idxj =  np.array(idxj).astype(int)
     
-    winsize = (idxi[1] - idxi[0] , idxj[1] - idxj[0])
-    wind = build_2D_tapering_function(winsize, wintype)
+    win_size = (idxi[1] - idxi[0] , idxj[1] - idxj[0])
+    wind = build_2D_tapering_function(win_size, win_type)
     
-    mask = np.zeros((Size, Size)) 
+    mask = np.zeros(Size) 
     mask[idxi.item(0):idxi.item(1), idxj.item(0):idxj.item(1)] = wind
     
     return mask
