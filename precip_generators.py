@@ -278,14 +278,14 @@ def initialize_nonparam_2d_nested_filter(X, gridres=1.0, **kwargs):
     level=0 
     while level < max_level:
 
-        for m in xrange(len(Idxi)):
+        for m in range(len(Idxi)):
         
             # the indices of rainfall field
             Idxinext, Idxjnext = _split_field(Idxi[m, :], Idxj[m, :], 2)
             # the indices of the field of fourier filters
             Idxipsdnext, Idxjpsdnext = _split_field(Idxipsd[m, :], Idxjpsd[m, :], 2)
             
-            for n in xrange(len(Idxinext)):
+            for n in range(len(Idxinext)):
             
                 mask = _get_mask(dim, Idxinext[n, :], Idxjnext[n, :], win_type)
                 war = np.sum((X*mask) > 0.01)/float((Idxinext[n, 1] - Idxinext[n, 0])**2)
@@ -370,9 +370,9 @@ def generate_noise_2d_ssft_filter(F, seed=None, **kwargs):
     # loop the windows and build composite image of correlated noise
 
     # loop rows
-    for i in xrange(F.shape[0]):
+    for i in range(F.shape[0]):
         # loop columns
-        for j in xrange(F.shape[1]):
+        for j in range(F.shape[1]):
         
             # apply fourier filtering with local filter
             lF = F[i,j,:,:]
@@ -466,8 +466,8 @@ def _split_field(idxi, idxj, Segments):
     Idxj = np.zeros((Segments**2,2))
     
     count=-1
-    for i in xrange(Segments):
-        for j in xrange(Segments):
+    for i in range(Segments):
+        for j in range(Segments):
             count+=1
             Idxi[count,0] = idxi[0] + i*winsizei
             Idxi[count,1] = np.min( (Idxi[count, 0] + winsizei, idxi[1]) )
