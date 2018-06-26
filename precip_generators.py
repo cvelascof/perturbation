@@ -450,6 +450,36 @@ def build_2D_tapering_function(win_size, win_type='flat-hanning'):
 
     return w2d
     
+def _rapsd(X):
+    if X.shape[0] != X.shape[1]:
+        raise ValueError("a square array expected, but the shape of X is (%d,%d)" % \
+                         (X.shape[0], X.shape[1]))
+    
+    L = X.shape[0]
+    
+    if L % 2 == 1:
+        XC,YC = np.ogrid[-int(L/2):int(L/2)+1, -int(L/2):int(L/2)+1]
+    else:
+        XC,YC = np.ogrid[-int(L/2):int(L/2), -int(L/2):int(L/2)]
+    
+    R = np.sqrt(XC*XC + YC*YC).astype(int)
+    
+    F = np.fft.fftshift(np.fft.fft2(X))
+    F = abs(F)**2
+    
+    if L % 2 == 0:
+        r_range = np.arange(0, int(L/2)+1)
+    else:
+        r_range = np.arange(0, int(L/2))
+    
+    result = []
+    for r in r_range:
+        MASK = R == r
+        F_vals = F[MASK]
+        result.append(np.mean(F_vals))
+    
+    return np.array(result)
+
 def _split_field(idxi, idxj, Segments):
     ''' Split domain field into a number of equally sapced segments.
     '''
