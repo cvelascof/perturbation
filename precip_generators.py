@@ -16,6 +16,9 @@ def get_method(name):
     +-------------------+-------------------------------------------------------+
     |     Name          |              Description                              |
     +===================+=======================================================+
+    |  parametric       | this global generator uses parametric Fourier         |
+    |                   | filering (exponential model)                          |
+    +-------------------+-------------------------------------------------------+
     |  nonparametric    | this global generator uses nonparametric Fourier      |
     |                   | filering                                              |
     +-------------------+-------------------------------------------------------+
@@ -25,7 +28,9 @@ def get_method(name):
     |  nested           | this local generator uses a nested Fourier filtering  |
     +-------------------+-------------------------------------------------------+
     """
-    if name.lower() == "nonparametric":
+    if name.lower() == "parametric":
+        return initialize_param_2d_fft_filter, generate_noise_2d_fft_filter
+    elif name.lower() == "nonparametric":
         return initialize_nonparam_2d_fft_filter, generate_noise_2d_fft_filter
     elif name.lower() == "ssft":
         return initialize_nonparam_2d_ssft_filter, generate_noise_2d_ssft_filter
@@ -33,6 +38,77 @@ def get_method(name):
         return initialize_nonparam_2d_nested_filter, generate_noise_2d_ssft_filter
     else:
         raise ValueError("unknown perturbation method %s" % name)
+
+def initialize_param_2d_fft_filter(X, tapering_function='flat-hanning',
+                                   model='exponential'):
+    """Takes a 2d input field and produces a fourier filter by using the Fast 
+    Fourier Transform (FFT).
+    
+    Parameters
+    ----------
+    X : array-like
+      Two-dimensional square array containing the input field. All values are 
+      required to be finite.
+    tapering_function : string
+       Optional tapering function to be applied to X.
+       (hanning, flat-hanning)
+    model : string
+        The parametric model to be used to fit the power spectrum of X.
+    
+    Returns
+    -------
+    F : array-like
+      A two-dimensional array containing the parametric filter.
+      It can be passed to generate_noise_2d_fft_filter().
+    """
+    
+    if len(X.shape) != 2:
+        raise ValueError("the input is not two-dimensional array")
+    if np.any(~np.isfinite(X)):
+      raise ValueError("X contains non-finite values")
+    if X.shape[0] != X.shape[1]:
+        raise ValueError("a square array expected, but the shape of X is (%d,%d)" % \
+                         (X.shape[0], X.shape[1]))
+    
+    L = X.shape[0]
+    
+    X = X.copy()
+    if tapering_function is not None:
+        X -= X.min()
+        tapering = build_2D_tapering_function((L, L), tapering_function)
+    else:
+        tapering = np.ones_like(X)
+    
+    if model.lower() == 'exponential':
+       
+        # compute radially averaged PSD
+        psd = _rapsd(X*tapering)
+        
+        # wavenumbers
+        if L % 2 == 0:
+            wn = np.arange(0, int(L/2)+1)
+        else:
+            wn = np.arange(0, int(L/2))
+        
+        # compute spectral slope Beta
+        p0 = np.polyfit(np.log(wn[1:]), np.log(psd[1:]), 1, w=np.sqrt(psd[1:]))
+        beta = -p0[0]
+        
+        # compute 2d filter
+        if L % 2 == 1:
+            XC,YC = np.ogrid[-int(L/2):int(L/2)+1, -int(L/2):int(L/2)+1]
+        else:
+            XC,YC = np.ogrid[-int(L/2):int(L/2), -int(L/2):int(L/2)]
+        R = np.sqrt(XC*XC + YC*YC)
+        R = fft.fftshift(R)
+        F = R**(-beta)
+        F[~np.isfinite(F)] = 1
+    
+    else:
+        raise ValueError("unknown parametric model %s" % model)
+    
+
+    return F
  
 def initialize_nonparam_2d_fft_filter(X, tapering_function='flat-hanning', donorm=False):
     """Takes a 2d input field and produces a fourier filter by using the Fast 
@@ -234,7 +310,8 @@ def initialize_nonparam_2d_nested_filter(X, gridres=1.0, **kwargs):
     if len(X.shape) != 2:
         raise ValueError("X must be a two-dimensional array")
     if X.shape[0] != X.shape[1]:
-        raise ValueError("X must have a square domain")
+        raise ValueError("a square array expected, but the shape of X is (%d,%d)" % \
+                         (X.shape[0], X.shape[1]))
     if np.any(np.isnan(X)):
         raise ValueError("X must not contain NaNs")
         
@@ -437,9 +514,7 @@ def build_2D_tapering_function(win_size, win_type='flat-hanning'):
         w1dc = A   
         
     else:
-        print("Unknown win_type, returning a rectangular window.")
-        w1dr = np.ones(win_size[0])
-        w1dc = np.ones(win_size[1])
+        raise ValueError("unknown win_type %s" % win_type)
     
     # Expand to 2-D
     w2d = np.sqrt(np.outer(w1dr,w1dc))
@@ -464,7 +539,7 @@ def _rapsd(X):
     
     R = np.sqrt(XC*XC + YC*YC).astype(int)
     
-    F = np.fft.fftshift(np.fft.fft2(X))
+    F = fft.fftshift(np.fft.fft2(X))
     F = abs(F)**2
     
     if L % 2 == 0:
